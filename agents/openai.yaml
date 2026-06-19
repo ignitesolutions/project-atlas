@@ -1,0 +1,5 @@
+interface:
+  display_name: "Project Atlas"
+  short_description: "Create and maintain repo-native AI project context."
+  icon: "🗺️"
+  brand_color: "#334155"

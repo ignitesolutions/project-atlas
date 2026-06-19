@@ -1,0 +1,3 @@
+# Conventions
+
+Greenfield context placeholder.

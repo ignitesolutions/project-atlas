@@ -1,0 +1,3 @@
+# Snapshots
+
+Greenfield directory README.

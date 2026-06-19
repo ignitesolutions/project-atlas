@@ -1,0 +1,3 @@
+# Architecture
+
+Greenfield context placeholder.

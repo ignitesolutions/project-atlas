@@ -1,0 +1,3 @@
+# Snapshots
+
+Template directory README.

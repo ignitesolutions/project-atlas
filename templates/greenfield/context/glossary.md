@@ -1,0 +1,3 @@
+# Glossary
+
+Greenfield context placeholder.
