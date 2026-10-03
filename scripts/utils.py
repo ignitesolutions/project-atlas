@@ -24,6 +24,7 @@ ATLAS_DIR = "project-atlas"
 EXISTING_REQUIRED_FILES = [
     "project-atlas/README.md",
     "project-atlas/agent-playbook.md",
+    "project-atlas/status.md",
     "project-atlas/.project-atlasignore",
     "project-atlas/project-overview.md",
     "project-atlas/architecture.md",
@@ -49,7 +50,7 @@ EXISTING_REQUIRED_DIRS = [
 
 GREENFIELD_REQUIRED_FILES = [
     "project-atlas/README.md", "project-atlas/agent-playbook.md", "project-atlas/atlas.json",
-    "project-atlas/plan/product-brief.md", "project-atlas/plan/stack-proposal.md",
+    "project-atlas/status.md", "project-atlas/plan/product-brief.md", "project-atlas/plan/stack-proposal.md",
     "project-atlas/plan/architecture-plan.md", "project-atlas/plan/data-model-plan.md",
     "project-atlas/plan/auth-plan.md", "project-atlas/plan/feature-plan.md",
     "project-atlas/plan/implementation-roadmap.md", "project-atlas/plan/open-questions.md",
@@ -104,7 +105,20 @@ ALIAS_FILES = {
     "project-atlas/workflows.md": ["project-atlas/agent-playbook.md", "project-atlas/handoffs/README.md"],
     "project-atlas/go-live-checklist.md": ["project-atlas/launch-checklist.md"],
     "project-atlas/deployment-checklist.md": ["project-atlas/launch-checklist.md", "project-atlas/deployment.md"],
+    "project-atlas/todo.md": ["project-atlas/tasks.md"],
+    "project-atlas/task-list.md": ["project-atlas/tasks.md"],
+    "project-atlas/todo-list.md": ["project-atlas/tasks.md"],
 }
+
+# Living documents accumulate hand-authored content for the life of the project and are written
+# only when absent, never regenerated (not even with --force). See write_file_once().
+LIVING_DOCUMENT_FILES = ["project-atlas/status.md", "project-atlas/tasks.md", "project-atlas/launch-checklist.md"]
+
+# Files allowed directly at the project-atlas/ root besides Markdown documents.
+ATLAS_ROOT_NON_MARKDOWN = {"atlas.json", ".project-atlasignore", ".update.lock"}
+LOG_LINE_LIMIT = 150
+TASKS_LINE_LIMIT = 150
+STATUS_UNFILLED_MARKER = "Last updated: never"
 
 # These files are intentionally lightweight scaffolds. They create durable locations for
 # future human or agent notes and are expected to remain even when empty except README text.
@@ -117,6 +131,7 @@ ALLOWED_SCAFFOLD_FILES = {
     "project-atlas/plans/completed/README.md",
     "project-atlas/.project-atlasignore",
     "project-atlas/maintenance-log.md",
+    "project-atlas/status.md",
     "project-atlas/tasks.md",
     "project-atlas/launch-checklist.md",
 }
@@ -601,6 +616,75 @@ def _contract_diagnostics(repo: Path, rel: str, criteria: Iterable[str]) -> List
     return diagnostics
 
 
+def _last_app_commit_time(repo: Path) -> int | None:
+    """Unix time of the newest commit touching application files (Atlas and root agent files excluded)."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "log", "-1", "--format=%ct", "--", ".", ":!project-atlas", ":!AGENTS.md", ":!CLAUDE.md"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = result.stdout.strip()
+    return int(value) if result.returncode == 0 and value.isdigit() else None
+
+
+def _completed_task_phases(lines: List[str]) -> List[Tuple[int, int]]:
+    """(start, end) line ranges of `## ` phases in tasks.md whose task boxes are all checked."""
+    phases: List[Tuple[int, int]] = []
+    starts = [i for i, line in enumerate(lines) if line.startswith("## ")]
+    managed = next((i for i, line in enumerate(lines) if line.startswith("<!-- project-atlas:generated:")), len(lines))
+    for index, start in enumerate(starts):
+        if start >= managed:
+            break
+        end = min(starts[index + 1] if index + 1 < len(starts) else len(lines), managed)
+        boxes = [line for line in lines[start:end] if re.match(r"^\s*-\s*\[[ xX]\]", line)]
+        if boxes and all(re.match(r"^\s*-\s*\[[xX]\]", line) for line in boxes):
+            phases.append((start, end))
+    return phases
+
+
+def atlas_warnings(repo: Path, mode: str = "existing") -> List[Dict[str, Any]]:
+    """Hygiene findings that never fail verification: they flag drift a returning agent should fix."""
+    repo = Path(repo)
+    atlas = repo / ATLAS_DIR
+    warnings: List[Dict[str, Any]] = []
+    if not atlas.is_dir():
+        return warnings
+
+    status = atlas / "status.md"
+    if status.is_file():
+        text = status.read_text(encoding="utf-8", errors="ignore")
+        if STATUS_UNFILLED_MARKER in text:
+            warnings.append(_diagnostic("STATUS_UNFILLED", ["project-atlas/status.md"], "status.md has never been filled in.", "Record current work, next steps, blockers, and unverified work in status.md."))
+        else:
+            last_commit = _last_app_commit_time(repo)
+            if last_commit and last_commit > status.stat().st_mtime + 60:
+                warnings.append(_diagnostic("STATUS_STALE", ["project-atlas/status.md"], "Application code was committed after status.md was last updated.", "Rewrite status.md to reflect the current state of work."))
+
+    log_rel = "project-atlas/context/maintenance-log.md" if mode == "greenfield" else "project-atlas/maintenance-log.md"
+    log = repo / log_rel
+    if log.is_file():
+        count = len(log.read_text(encoding="utf-8", errors="ignore").splitlines())
+        if count > LOG_LINE_LIMIT:
+            warnings.append(_diagnostic("LOG_OVERSIZE", [log_rel], f"Maintenance log is {count} lines (limit {LOG_LINE_LIMIT}).", "Run `maintain_atlas.py --mode compact-log`, then summarize the archived entries into the Earlier history line."))
+
+    tasks = atlas / "tasks.md"
+    if tasks.is_file():
+        lines = tasks.read_text(encoding="utf-8", errors="ignore").splitlines()
+        if len(lines) > TASKS_LINE_LIMIT and _completed_task_phases(lines):
+            warnings.append(_diagnostic("TASKS_OVERSIZE", ["project-atlas/tasks.md"], f"tasks.md is {len(lines)} lines and contains fully completed phases.", "Run `audit_plans.py --mode apply --archive-completed` to move completed phases to tasks-archive.md."))
+
+    stray = sorted(
+        f"project-atlas/{p.name}" for p in atlas.iterdir()
+        if p.is_file() and p.suffix.lower() != ".md" and p.name not in ATLAS_ROOT_NON_MARKDOWN
+        and not p.name.endswith(".bak") and not p.name.startswith(".")
+    )
+    if stray:
+        warnings.append(_diagnostic("ATLAS_STRAY_FILE", stray, "Non-document files sit at the Atlas root.", "Move .sql files to project-atlas/sql/ (and add them to its execution ledger); move data files to snapshots/ or out of the Atlas."))
+    return warnings
+
+
 def verify_existing_atlas(repo: Path, stack: Dict[str, Any] | None = None, scan: Dict[str, Any] | None = None, selected_platforms: Iterable[str] = (), level: str = "semantic", generation_mode: str = "auto") -> Dict[str, Any]:
     repo = Path(repo).resolve()
     raw_manifest, manifest_error = load_manifest(repo)
@@ -724,4 +808,5 @@ def verify_existing_atlas(repo: Path, stack: Dict[str, Any] | None = None, scan:
         "cfc_inventory_gaps": cfc_inventory_gaps, "unresolved_slots": unresolved_slots,
         "stale_sources": sorted(set(stale_sources)), "generated_drift": generated_drift,
         "semantic_gaps": semantic_gaps,
+        "warnings": atlas_warnings(repo, mode),
     }

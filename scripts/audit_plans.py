@@ -3,8 +3,13 @@
 
 Convention (documented in agent-playbook.md, "Plan Tracking Protocol"): a task line that tracks a
 saved implementation plan links to it as `(plan: [<slug>](plans/in-flight/<file>.md))` (or
-`plans/completed/...` once done). This script keeps plan file location, and the link text that
+`plans/completed/...` once done). Any task line with exactly one Markdown link into plans/ is
+tracked, wherever the link sits in the line; any mention of a plan filename in tasks.md or
+tasks-archive.md counts as a reference for orphan detection. This script keeps plan file location, and the link text that
 points at it, consistent with the task's checkbox state.
+
+With --archive-completed (apply mode only), `## ` phases of tasks.md whose task boxes are all
+checked move verbatim to tasks-archive.md, keeping tasks.md short for every session that reads it.
 
 It never invents task descriptions or deletes files — findings it cannot resolve deterministically
 (orphaned plans, broken links, duplicate filenames in both folders) are always reported, never
@@ -23,12 +28,14 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 try:
-    from utils import atlas_lock, atomic_write_text, dump_json
+    from utils import atlas_lock, atomic_write_text, dump_json, _completed_task_phases
 except ImportError:
-    from .utils import atlas_lock, atomic_write_text, dump_json
+    from .utils import atlas_lock, atomic_write_text, dump_json, _completed_task_phases
 
-TASK_LINE_RE = re.compile(r"^\s*-\s*\[([ x])\].*\(plan:\s*\[[^\]]*\]\(([^)]+)\)\)\s*$")
-PLAN_LINK_RE_TEMPLATE = r"(\(plan:\s*\[[^\]]*\]\()({path})(\))"
+TASK_BOX_RE = re.compile(r"^\s*-\s*\[([ xX])\]")
+PLAN_LINK_RE = re.compile(r"\[[^\]]*\]\((plans/(?:in-flight|completed)/[^)\s]+)\)")
+PLAN_MENTION_RE = re.compile(r"plans/(?:in-flight|completed)/([^)\s`'\"]+\.md)")
+ARCHIVE_HEADER = "# Tasks Archive\n\nCompleted phases moved verbatim from `tasks.md`. Read only when history is needed.\n"
 
 
 def _diagnostic(code: str, paths: List[str], message: str, repair: str) -> Dict[str, Any]:
@@ -44,18 +51,33 @@ def _list_plan_filenames(dir_path: Path) -> set[str]:
 def _parse_task_entries(lines: List[str]) -> List[Dict[str, Any]]:
     entries = []
     for i, line in enumerate(lines):
-        match = TASK_LINE_RE.match(line)
-        if not match:
+        box = TASK_BOX_RE.match(line)
+        links = PLAN_LINK_RE.findall(line) if box else []
+        if len(set(links)) != 1:
             continue
-        path = match.group(2)
-        if not (path.startswith("plans/in-flight/") or path.startswith("plans/completed/")):
-            continue
-        entries.append({"line_index": i, "checked": match.group(1) == "x", "path": path})
+        entries.append({"line_index": i, "checked": box.group(1) in "xX", "path": links[0]})
     return entries
 
 
-def audit(repo: Path, mode: str) -> Dict[str, Any]:
+def _archive_completed_phases(tasks_path: Path, archive_path: Path) -> List[str]:
+    lines = tasks_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    phases = _completed_task_phases(lines)
+    if not phases:
+        return []
+    moved_blocks = ["\n".join(lines[start:end]).rstrip() for start, end in phases]
+    drop = {i for start, end in phases for i in range(start, end)}
+    kept = [line for i, line in enumerate(lines) if i not in drop]
+    existing = archive_path.read_text(encoding="utf-8", errors="ignore").rstrip() if archive_path.is_file() else ARCHIVE_HEADER.rstrip()
+    atomic_write_text(archive_path, existing + "\n\n" + "\n\n".join(moved_blocks) + "\n")
+    atomic_write_text(tasks_path, "\n".join(kept).rstrip() + "\n")
+    return [block.splitlines()[0][3:].strip() for block in moved_blocks]
+
+
+def audit(repo: Path, mode: str, archive_completed: bool = False, reopen: bool = True) -> Dict[str, Any]:
+    """reopen=False reports (instead of performing) moves from completed/ back to in-flight/;
+    maintain_atlas.py's automatic pass uses it so a deliberately filed plan never bounces back."""
     tasks_path = repo / "project-atlas/tasks.md"
+    archive_path = repo / "project-atlas/tasks-archive.md"
     in_flight_dir = repo / "project-atlas/plans/in-flight"
     completed_dir = repo / "project-atlas/plans/completed"
 
@@ -64,7 +86,7 @@ def audit(repo: Path, mode: str) -> Dict[str, Any]:
     relinked: List[str] = []
 
     if not tasks_path.is_file():
-        return {"status": "passed", "mode": mode, "moved": [], "relinked": [], "diagnostics": []}
+        return {"status": "passed", "mode": mode, "moved": [], "relinked": [], "archived_phases": [], "diagnostics": []}
 
     original_text = tasks_path.read_text(encoding="utf-8", errors="ignore")
     had_trailing_newline = original_text.endswith("\n")
@@ -73,7 +95,9 @@ def audit(repo: Path, mode: str) -> Dict[str, Any]:
 
     in_flight_files = _list_plan_filenames(in_flight_dir)
     completed_files = _list_plan_filenames(completed_dir)
-    referenced_filenames: set[str] = set()
+    referenced_filenames: set[str] = set(PLAN_MENTION_RE.findall(original_text))
+    if archive_path.is_file():
+        referenced_filenames.update(PLAN_MENTION_RE.findall(archive_path.read_text(encoding="utf-8", errors="ignore")))
 
     for entry in entries:
         filename = Path(entry["path"]).name
@@ -117,7 +141,7 @@ def audit(repo: Path, mode: str) -> Dict[str, Any]:
 
         paths = [f"project-atlas/tasks.md:{entry['line_index'] + 1}", f"project-atlas/plans/{actual_location}/{filename}"]
 
-        if mode == "apply":
+        if mode == "apply" and not (needs_move and expected_location == "in-flight" and not reopen):
             if needs_move:
                 src = (in_flight_dir if actual_location == "in-flight" else completed_dir) / filename
                 dst = (in_flight_dir if expected_location == "in-flight" else completed_dir) / filename
@@ -130,10 +154,9 @@ def audit(repo: Path, mode: str) -> Dict[str, Any]:
                 else:
                     completed_files.discard(filename)
                     in_flight_files.add(filename)
-            link_pattern = re.compile(PLAN_LINK_RE_TEMPLATE.format(path=re.escape(entry["path"])))
-            new_line, count = link_pattern.subn(r"\g<1>" + expected_path + r"\g<3>", lines[entry["line_index"]], count=1)
-            if count:
-                lines[entry["line_index"]] = new_line
+            old_link = f"]({entry['path']})"
+            if old_link in lines[entry["line_index"]]:
+                lines[entry["line_index"]] = lines[entry["line_index"]].replace(old_link, f"]({expected_path})", 1)
                 relinked.append(f"project-atlas/tasks.md:{entry['line_index'] + 1} -> {expected_path}")
         else:
             diagnostics.append(_diagnostic(code, paths, message, repair))
@@ -156,11 +179,16 @@ def audit(repo: Path, mode: str) -> Dict[str, Any]:
         if new_text != original_text:
             atomic_write_text(tasks_path, new_text)
 
+    archived_phases: List[str] = []
+    if mode == "apply" and archive_completed:
+        archived_phases = _archive_completed_phases(tasks_path, archive_path)
+
     return {
         "status": "failed" if diagnostics else "passed",
         "mode": mode,
         "moved": moved,
         "relinked": relinked,
+        "archived_phases": archived_phases,
         "diagnostics": diagnostics,
     }
 
@@ -169,11 +197,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Reconcile project-atlas plans/ location with tasks.md checkbox state.")
     parser.add_argument("--repo", default=".")
     parser.add_argument("--mode", choices=["check", "apply"], default="check")
+    parser.add_argument("--archive-completed", action="store_true", help="Apply mode: move fully completed tasks.md phases to tasks-archive.md")
     args = parser.parse_args()
 
     repo = Path(args.repo).resolve()
     with atlas_lock(repo):
-        result = audit(repo, args.mode)
+        result = audit(repo, args.mode, archive_completed=args.archive_completed)
 
     print(dump_json(result))
     return 0 if result["status"] == "passed" else 1

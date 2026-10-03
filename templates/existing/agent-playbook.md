@@ -1,8 +1,8 @@
 # Agent Playbook
 
-Read `project-overview.md`, `architecture.md`, `code-map.md`, `operations.md`, and
-`open-questions.md` before making changes. Check `atlas.json` for lifecycle state, freshness,
-source evidence, and generated-section ownership.
+Read `status.md` first, then this playbook; the "Read On Demand" table below says which other
+Atlas files to read for the task at hand. `atlas.json` holds lifecycle state, freshness, source
+evidence, and generated-section ownership.
 
 Preserve all hand-authored text outside `<!-- project-atlas:generated:* -->` blocks. After a
 durable change, run focused maintenance with `--paths`, `--changed-since`, or `--domain`.

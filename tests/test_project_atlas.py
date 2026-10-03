@@ -13,7 +13,7 @@ SKILL = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL / "scripts"))
 
 from scan_repo import extract_cfc_methods, scan_repository
-from utils import redact_secrets, should_ignore, verify_existing_atlas, atlas_lock, atomic_write_text, migrate_manifest
+from utils import redact_secrets, should_ignore, verify_existing_atlas, atlas_lock, atomic_write_text, migrate_manifest, append_log
 from write_templates import create_existing, create_greenfield, convert_greenfield, write_root_agent_file
 
 
@@ -419,6 +419,207 @@ class ProjectAtlasTests(unittest.TestCase):
         payload = json.loads(second.stdout)
         self.assertTrue(payload["no_changes"])
         self.assertEqual([], payload["updated"])
+
+    def run_cli(self, script, *args):
+        result = subprocess.run([sys.executable, str(SKILL / "scripts" / script), "--repo", str(self.repo), *args], capture_output=True, text=True)
+        return result.returncode, json.loads(result.stdout)
+
+    def git(self, *args):
+        subprocess.run(["git", "-C", str(self.repo), *args], capture_output=True, text=True, check=True)
+
+    def test_status_file_is_required_living_document(self):
+        self.bootstrap()
+        status = self.repo / "project-atlas/status.md"
+        self.assertIn("## Now", status.read_text(encoding="utf-8"))
+        status.write_text("# Status\n\nLast updated: 2026-10-02\n\n## Now\n\n- Hand-written state.\n", encoding="utf-8")
+        create_existing(self.repo, scan_repository(self.repo), force=True, update=True)
+        self.assertIn("Hand-written state.", status.read_text(encoding="utf-8"))
+        status.unlink()
+        _, payload = self.run_cli("maintain_atlas.py", "--mode", "check", "--level", "structure")
+        self.assertIn("project-atlas/status.md", payload["verification"]["missing_required_files"])
+        self.run_cli("maintain_atlas.py", "--mode", "update")
+        self.assertTrue(status.is_file())
+
+    def test_root_sections_share_one_session_protocol(self):
+        self.bootstrap()
+        claude = (self.repo / "CLAUDE.md").read_text(encoding="utf-8")
+        agents = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertEqual(claude, agents)
+        self.assertIn("project-atlas/status.md", claude)
+        self.assertIn("--mode status", claude)
+        self.assertLess(claude.index("status.md"), claude.index("agent-playbook.md"))
+
+    def test_status_mode_reports_drift_without_rescan(self):
+        self.bootstrap()
+        code, payload = self.run_cli("maintain_atlas.py", "--mode", "status")
+        self.assertEqual(0, code)
+        self.assertEqual("attention", payload["status"])
+        self.assertIn("STATUS_UNFILLED", {w["code"] for w in payload["warnings"]})
+        self.assertEqual(0, payload["changed_app_files"])
+        (self.repo / "README.md").write_text("# Changed\n", encoding="utf-8")
+        (self.repo / "new.cfm").write_text("<cfoutput>x</cfoutput>\n", encoding="utf-8")
+        _, payload = self.run_cli("maintain_atlas.py", "--mode", "status")
+        self.assertEqual(["README.md", "new.cfm"], payload["changed_app_files_sample"])
+        self.assertTrue(payload["next_actions"])
+        self.run_cli("maintain_atlas.py", "--mode", "update")
+        _, payload = self.run_cli("maintain_atlas.py", "--mode", "status")
+        self.assertEqual(0, payload["changed_app_files"])
+
+    def test_status_mode_uses_git_commit_and_refreshes_it(self):
+        self.git("init", "-q")
+        self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init")
+        self.git("add", "README.md")
+        self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "readme")
+        self.bootstrap()
+        (self.repo / "app.cfm").write_text("x\n", encoding="utf-8")
+        self.git("add", "app.cfm")
+        self.git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "app")
+        _, payload = self.run_cli("maintain_atlas.py", "--mode", "status")
+        self.assertEqual(1, payload["commits_since_atlas"])
+        self.assertEqual(["app.cfm"], payload["changed_app_files_sample"])
+        self.run_cli("maintain_atlas.py", "--mode", "update")
+        _, payload = self.run_cli("maintain_atlas.py", "--mode", "status")
+        self.assertEqual(0, payload["commits_since_atlas"])
+        self.assertEqual(0, payload["changed_app_files"])
+
+    def test_auto_mode_reports_changes_then_brings_atlas_current(self):
+        self.bootstrap()
+        (self.repo / "README.md").write_text("# Changed\n", encoding="utf-8")
+        (self.repo / "Application.cfc").write_text("component {}\n", encoding="utf-8")
+        code, payload = self.run_cli("maintain_atlas.py", "--mode", "auto")
+        self.assertEqual(0, code)
+        self.assertEqual("auto", payload["mode"])
+        self.assertEqual(["Application.cfc", "README.md"], payload["changed_since_last_update"])
+        self.assertIn("project-atlas/atlas.json", payload["updated"])
+        self.assertIn("STATUS_UNFILLED", {w["code"] for w in payload["warnings"]})
+        _, after = self.run_cli("maintain_atlas.py", "--mode", "status")
+        self.assertEqual(0, after["changed_app_files"])
+        _, again = self.run_cli("maintain_atlas.py", "--mode", "auto")
+        self.assertEqual([], again["changed_since_last_update"])
+
+    def test_auto_mode_surfaces_failing_diagnostics_as_next_actions(self):
+        self.bootstrap()
+        (self.repo / "project-atlas/todo.md").write_text("[ ] thing\n", encoding="utf-8")
+        _, payload = self.run_cli("maintain_atlas.py", "--mode", "auto")
+        self.assertNotEqual("passed", payload["status"])
+        self.assertTrue(any(action.startswith("INVALID_ALIAS (project-atlas/todo.md)") for action in payload["next_actions"]))
+
+    def test_auto_mode_without_atlas_points_to_bootstrap(self):
+        code, payload = self.run_cli("maintain_atlas.py", "--mode", "auto")
+        self.assertEqual(1, code)
+        self.assertIn("bootstrap", payload["next_actions"][0])
+        self.assertFalse((self.repo / "project-atlas").exists())
+
+    def test_log_oversize_warning_and_compact_log(self):
+        self.bootstrap()
+        log = self.repo / "project-atlas/maintenance-log.md"
+        for index in range(60):
+            append_log(log, f"\n## 2026-01-{index:02d} - Entry {index}\n\n- Did thing {index}.")
+        _, payload = self.run_cli("maintain_atlas.py", "--mode", "check", "--level", "structure")
+        self.assertIn("LOG_OVERSIZE", {w["code"] for w in payload["warnings"]})
+        code, payload = self.run_cli("maintain_atlas.py", "--mode", "compact-log")
+        self.assertEqual(0, code)
+        self.assertGreater(payload["archived_entries"], 0)
+        text = log.read_text(encoding="utf-8")
+        self.assertLessEqual(len(text.splitlines()), 150)
+        self.assertIn("## Earlier history", text)
+        self.assertIn("Entry 59", text)
+        self.assertIn("<!-- Compact index", text)
+        archive = (self.repo / "project-atlas/maintenance-log-archive.md").read_text(encoding="utf-8")
+        self.assertIn("Entry 0\n", archive)
+        self.assertNotIn("Entry 59", archive)
+        self.assertIn("Atlas bootstrap", text, "bootstrap entry is dated today, so it is the newest")
+        _, payload = self.run_cli("maintain_atlas.py", "--mode", "compact-log")
+        self.assertEqual(0, payload["archived_entries"])
+        self.assertEqual(1, log.read_text(encoding="utf-8").count("## Earlier history"))
+
+    def test_compact_log_keeps_newest_by_date_not_position(self):
+        self.bootstrap()
+        log = self.repo / "project-atlas/maintenance-log.md"
+        newest_first = "".join(f"\n## 2026-02-{day:02d} - Prepended {day}\n\n" + "".join(f"- line {n}\n" for n in range(8)) for day in range(28, 0, -1))
+        log.write_text("# Maintenance Log\n" + newest_first, encoding="utf-8")
+        self.run_cli("maintain_atlas.py", "--mode", "compact-log")
+        text = log.read_text(encoding="utf-8")
+        self.assertIn("Prepended 28", text)
+        self.assertNotIn("Prepended 1\n", text)
+        self.assertLess(text.index("Prepended 27"), text.index("Prepended 28"))
+
+    def test_stray_files_and_duplicate_task_lists_are_flagged(self):
+        self.bootstrap()
+        (self.repo / "project-atlas/001_seed.sql").write_text("select 1;\n", encoding="utf-8")
+        (self.repo / "project-atlas/todo.md").write_text("[ ] thing\n", encoding="utf-8")
+        _, payload = self.run_cli("maintain_atlas.py", "--mode", "check", "--level", "structure")
+        stray = [w for w in payload["warnings"] if w["code"] == "ATLAS_STRAY_FILE"]
+        self.assertEqual(["project-atlas/001_seed.sql"], stray[0]["paths"])
+        self.assertIn("INVALID_ALIAS", {d["code"] for d in payload["diagnostics"]})
+
+    def test_update_moves_checked_plans_to_completed(self):
+        self.bootstrap()
+        plan = self.repo / "project-atlas/plans/in-flight/2026-10-01-thing.md"
+        plan.write_text("# Plan\n", encoding="utf-8")
+        (self.repo / "project-atlas/tasks.md").write_text("# Tasks\n\n## Phase 1: Build\n\n- [x] Build thing (plan: [thing](plans/in-flight/2026-10-01-thing.md))\n", encoding="utf-8")
+        _, payload = self.run_cli("maintain_atlas.py", "--mode", "update")
+        self.assertTrue((self.repo / "project-atlas/plans/completed/2026-10-01-thing.md").is_file())
+        self.assertEqual(1, len(payload["plans_moved"]))
+        self.assertIn("plans/completed/2026-10-01-thing.md", (self.repo / "project-atlas/tasks.md").read_text(encoding="utf-8"))
+
+    def test_plan_links_mid_line_and_plain_links_are_tracked(self):
+        self.bootstrap()
+        flight = self.repo / "project-atlas/plans/in-flight"
+        done = self.repo / "project-atlas/plans/completed"
+        (flight / "2026-09-01-a.md").write_text("# A\n", encoding="utf-8")
+        (flight / "2026-09-02-b.md").write_text("# B\n", encoding="utf-8")
+        (done / "2026-09-03-c.md").write_text("# C\n", encoding="utf-8")
+        (flight / "2026-09-04-d.md").write_text("# D\n", encoding="utf-8")
+        (self.repo / "project-atlas/tasks.md").write_text(
+            "# Tasks\n\n## Phase 1\n\n"
+            "- [x] A done (plan: [a](plans/in-flight/2026-09-01-a.md)) — verified live afterwards.\n"
+            "- [x] B done, see [b](plans/in-flight/2026-09-02-b.md) for detail.\n"
+            "- [ ] C pending live check (plan: [c](plans/completed/2026-09-03-c.md)) — code complete.\n"
+            "\nSpec: `plans/in-flight/2026-09-04-d.md`.\n", encoding="utf-8")
+        _, payload = self.run_cli("maintain_atlas.py", "--mode", "update")
+        self.assertTrue((done / "2026-09-01-a.md").is_file())
+        self.assertTrue((done / "2026-09-02-b.md").is_file())
+        self.assertTrue((done / "2026-09-03-c.md").is_file(), "automatic pass must not reopen a filed plan")
+        codes = {w["code"] for w in payload["warnings"]}
+        self.assertIn("PLAN_MOVED_TO_IN_FLIGHT", codes)
+        self.assertNotIn("ORPHANED_PLAN", codes)
+        text = (self.repo / "project-atlas/tasks.md").read_text(encoding="utf-8")
+        self.assertIn("(plan: [a](plans/completed/2026-09-01-a.md)) — verified live afterwards.", text)
+        self.assertIn("[b](plans/completed/2026-09-02-b.md)", text)
+
+    def test_archive_completed_phases(self):
+        self.bootstrap()
+        (self.repo / "project-atlas/plans/completed/2026-09-01-done.md").write_text("# Done\n", encoding="utf-8")
+        tasks = self.repo / "project-atlas/tasks.md"
+        tasks.write_text("# Tasks\n\nIntro.\n\n## Phase 1: Done\n\n- [x] A (plan: [done](plans/completed/2026-09-01-done.md))\n- [x] B\n\n## Phase 2: Open\n\n- [x] C\n- [ ] D\n", encoding="utf-8")
+        code, payload = self.run_cli("audit_plans.py", "--mode", "apply", "--archive-completed")
+        self.assertEqual(0, code)
+        self.assertEqual(["Phase 1: Done"], payload["archived_phases"])
+        text = tasks.read_text(encoding="utf-8")
+        self.assertNotIn("Phase 1", text)
+        self.assertIn("- [ ] D", text)
+        self.assertIn("Phase 1: Done", (self.repo / "project-atlas/tasks-archive.md").read_text(encoding="utf-8"))
+        code, payload = self.run_cli("audit_plans.py", "--mode", "check")
+        self.assertEqual([], payload["diagnostics"])
+
+    def test_sql_ledger_backfilled_into_older_readme(self):
+        self.bootstrap()
+        readme = self.repo / "project-atlas/sql/README.md"
+        readme.write_text("# SQL Scripts\n\nHand-written notes.\n", encoding="utf-8")
+        create_existing(self.repo, scan_repository(self.repo), update=True)
+        text = readme.read_text(encoding="utf-8")
+        self.assertIn("Hand-written notes.", text)
+        self.assertEqual(1, text.count("## Execution ledger"))
+        create_existing(self.repo, scan_repository(self.repo), update=True)
+        self.assertEqual(1, readme.read_text(encoding="utf-8").count("## Execution ledger"))
+
+    def test_greenfield_has_status_and_sql_ledger(self):
+        result = create_greenfield(self.repo)
+        self.assertEqual("passed", result["status"])
+        self.assertTrue((self.repo / "project-atlas/status.md").is_file())
+        self.assertIn("## Execution ledger", (self.repo / "project-atlas/sql/README.md").read_text(encoding="utf-8"))
+        self.assertIn("project-atlas/status.md", (self.repo / "AGENTS.md").read_text(encoding="utf-8"))
 
     def test_large_scan_performance_smoke(self):
         for index in range(500):

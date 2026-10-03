@@ -8,11 +8,13 @@ keep the Atlas unverified.
 
 ## Core documents
 
+- `status.md`: the resume path — Now, Next (top 3, recommended first), Blocked, Unverified, Pending environment actions, and the last session. Rewritten in place each session, under 40 lines; no semantic contract, but `--mode status` flags it unfilled or stale.
 - `project-overview.md`: purpose, primary users/roles, and three to five principal workflows.
 - `architecture.md`: end-to-end request flow, layers, module boundaries, and external boundaries.
 - `code-map.md`: concise navigation to entry points, routes/controllers, services, and data access. Keep complete generated inventories in one managed location.
 - `operations.md`: test path, environments, deployment, configuration names/locations, monitoring, rollback, and recovery—or explicit unknowns.
 - `open-questions.md`: every unconfirmed inference or unresolved decision, phrased as a question with impact.
+- `sql/README.md`: an execution ledger row per `.sql` file, with the date it ran in each environment (blank = not yet run).
 
 ## Conditional documents
 

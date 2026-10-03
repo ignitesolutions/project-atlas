@@ -9,11 +9,12 @@ This file is the operating contract for every agent working in this repository. 
 
 ## Orientation
 
-1. Read `project-atlas/README.md` for project overview and context links.
-2. Read `project-atlas/plan/architecture-plan.md` and `project-atlas/plan/implementation-roadmap.md` for the intended design.
-3. Read `project-atlas/context/conventions.md` before writing any code.
-4. Check `project-atlas/context/known-risks.md` for fragile or sensitive areas.
-5. Check `project-atlas/plan/open-questions.md` for unresolved decisions that may affect your work.
+1. Read `project-atlas/status.md` for where work stands and what is next.
+2. Read `project-atlas/README.md` for project overview and context links.
+3. Read `project-atlas/plan/architecture-plan.md` and `project-atlas/plan/implementation-roadmap.md` for the intended design.
+4. Read `project-atlas/context/conventions.md` before writing any code.
+5. Check `project-atlas/context/known-risks.md` for fragile or sensitive areas.
+6. Check `project-atlas/plan/open-questions.md` for unresolved decisions that may affect your work.
 
 ## Task Tracking Protocol
 
@@ -66,15 +67,17 @@ After completing any durable change, update the relevant Atlas files:
 
 | Change type | Files to update |
 | --- | --- |
+| Any session that changed something | `status.md` |
 | New feature or route | `context/feature-index.md`, `context/code-map.md` |
 | Auth, sessions, permissions | `context/auth-and-access.md` |
 | Schema or query patterns | `context/database.md` |
 | New dependency or runtime change | `context/stack.md`, `context/dependency-map.md` |
 | Build, deploy, or hosting change | `context/deployment.md` |
 | Fragile or security-sensitive code | `context/known-risks.md` |
+| New or changed `.sql` file | `sql/README.md` execution ledger |
 | Env var, key, config, folder, SQL, or third-party setup that differs per environment | `launch-checklist.md` |
 | Plan change or resolved question | `plan/open-questions.md`, `plan/implementation-roadmap.md` |
-| Every meaningful Atlas run | `context/maintenance-log.md` |
+| Every meaningful Atlas run | `context/maintenance-log.md` (append; five lines at most) |
 | Task added, completed, or blocked | `tasks.md` |
 | Plan created, completed, or moved | `tasks.md`, `plans/in-flight/`, `plans/completed/` |
 
