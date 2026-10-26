@@ -29,7 +29,8 @@ SCRIPT_FUNCTION_RE = re.compile(
 )
 
 BUCKET_RULES = [
-    ("entry_points", ["application.cfc", "application.cfm", "index.cfm", "index.php", "app.py", "manage.py", "server.js", "main.js"]),
+    ("entry_points", ["application.cfc", "application.cfm", "index.cfm", "index.php", "app.py", "manage.py", "server.js", "main.js",
+                      "main.rs", "lib.rs", "build.rs", "index.ts", "main.ts", "server.ts", "app.ts"]),
     ("routes", ["route", "routes"]),
     ("controllers", ["controller", "controllers"]),
     ("handlers", ["handler", "handlers"]),
@@ -40,7 +41,7 @@ BUCKET_RULES = [
     ("components", ["component", "components", ".cfc"]),
     ("views", ["view", "views", "templates"]),
     ("frontend", ["frontend", "client", "assets", ".jsx", ".tsx", ".vue", ".svelte"]),
-    ("config", ["config", ".env", "settings", "server.json", "box.json"]),
+    ("config", ["config", ".env", "settings", "server.json", "box.json", "cargo.toml", "tsconfig.json"]),
     ("database", ["database", "db", "schema", "migration", "migrations", "sql"]),
     ("migrations", ["migration", "migrations"]),
     ("tests", ["test", "tests", "spec", "specs"]),
@@ -54,6 +55,7 @@ BUCKET_RULES = [
 EVIDENCE_NAMES = {
     "application.cfc", "application.cfm", "box.json", "server.json", "composer.json", "package.json",
     "pyproject.toml", "requirements.txt", "dockerfile", "docker-compose.yml", "compose.yml", "readme.md",
+    "cargo.toml", "tsconfig.json", "deno.json",
 }
 
 # Indicators of things that differ between dev/stage/live. Matches feed the
@@ -260,6 +262,24 @@ STACK_TEXT_OVERRIDE_TOKENS = [
     ("angular", ["@angular/core"]), ("svelte", ["svelte"]), ("nextjs", ['"next"', "'next'"]), ("nuxt", ["nuxt"]),
     ("graphql", ["graphql"]), ("tailwindcss", ["tailwindcss"]), ("rabbitmq", ["rabbitmq", "amqplib", "pika"]),
     ("kafka", ["kafka"]), ("elasticsearch", ["elasticsearch"]),
+    ("mssql", ["tiberius"]), ("postgresql", ['"pg":']), ("typescript", ['"typescript":']),
+]
+
+
+def _dependency_tokens(name: str) -> List[str]:
+    """Dependency declarations for a crate or npm package: Cargo.toml keys (`name = `,
+    `name.workspace`) and package.json keys (`"name":`), not the bare word in prose."""
+    return [f"{name} =", f"{name}=", f"{name}.workspace", f'"{name}":']
+
+
+# Rust crates and TypeScript/Node packages named in Cargo.toml or package.json.
+STACK_TEXT_OVERRIDE_TOKENS += [
+    ("axum", _dependency_tokens("axum")), ("actix-web", _dependency_tokens("actix-web")),
+    ("rocket", _dependency_tokens("rocket")), ("tauri", _dependency_tokens("tauri")),
+    ("express", _dependency_tokens("express")), ("nestjs", _dependency_tokens("@nestjs/core")),
+    ("fastify", _dependency_tokens("fastify")), ("prisma", _dependency_tokens("@prisma/client") + _dependency_tokens("prisma")),
+    ("drizzle", _dependency_tokens("drizzle-orm")), ("diesel", _dependency_tokens("diesel")),
+    ("sqlx", _dependency_tokens("sqlx")),
 ]
 
 
@@ -324,12 +344,12 @@ def discover_repository_files(repo: Path, max_files: int) -> Tuple[List[str], Li
 
 
 def _load_scan_cache(repo: Path) -> Dict[str, Any]:
-    path = repo / "project-atlas/.cache/scan-v3.json"
+    path = repo / "project-atlas/.cache/scan-v4.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data if data.get("version") == 3 else {"version": 3, "files": {}}
+        return data if data.get("version") == 4 else {"version": 4, "files": {}}
     except (OSError, json.JSONDecodeError):
-        return {"version": 3, "files": {}}
+        return {"version": 4, "files": {}}
 
 
 def _cache_entry(rel: str, path: Path, digest: str) -> Dict[str, object]:
@@ -431,8 +451,8 @@ def scan_repository(repo: Path, max_files: int = 20000, write_cache: bool = Fals
             third_party_hits.setdefault(label, set()).add(rel)
 
     if write_cache:
-        cache_path = repo / "project-atlas/.cache/scan-v3.json"
-        atomic_write_text(cache_path, json.dumps({"version": 3, "files": new_entries}, indent=2, sort_keys=True) + "\n")
+        cache_path = repo / "project-atlas/.cache/scan-v4.json"
+        atomic_write_text(cache_path, json.dumps({"version": 4, "files": new_entries}, indent=2, sort_keys=True) + "\n")
 
     # Path-based detection (detect_stack.py) misses frameworks/services that are only
     # named inside a manifest's content (e.g. "fastapi" as a line in requirements.txt).

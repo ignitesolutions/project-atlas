@@ -432,7 +432,7 @@ Every command returns an envelope with at least `status`, `mode`, and `diagnosti
   "commits_since_atlas": 11,
   "changed_app_files": 81,
   "changed_app_files_sample": ["api/htdocs/Application.cfc", "…"],
-  "skill_version": {"atlas": "1.3.0", "installed": "1.5.0"},
+  "skill_version": {"atlas": "1.3.0", "installed": "1.6.0"},
   "status_md_last_updated": "2026-10-01",
   "tasks": {"open": 10, "blocked": 0, "done": 3},
   "plans_in_flight": 0,
@@ -618,7 +618,7 @@ Project Atlas writes into your repository, so its write rules are strict:
 - **Ignore rules.** In Git repositories, discovery uses `git ls-files`, so `.gitignore` applies
   exactly. `.project-atlasignore` (at the repo root or in `project-atlas/`) adds Atlas-specific
   exclusions. Non-Git repositories use a filesystem walk with the same patterns.
-- **Caching.** Parsed evidence is cached by content digest in `project-atlas/.cache/scan-v3.json`.
+- **Caching.** Parsed evidence is cached by content digest in `project-atlas/.cache/scan-v4.json`.
   Source excerpts are not cached.
 
 ## Optional setup: database, design reference, site URL
@@ -660,6 +660,8 @@ selected) platforms:
 | `php` | `.php`, `composer.json`, `artisan`, `wp-config.php` |
 | `node-js` | `package.json`, lockfiles, Vite/Next/Nuxt/Webpack config |
 | `python` | `pyproject.toml`, `requirements.txt`, `Pipfile`, `manage.py`, `wsgi.py`, … |
+| `typescript` | `tsconfig.json`, non-declaration `.ts`/`.tsx`/`.mts`/`.cts` files (a lone `.d.ts` does not count) |
+| `rust` | `Cargo.toml`, `Cargo.lock`, `.rs` files |
 | `docker` | `Dockerfile`, compose files, `docker/` |
 | `mysql`, `mssql`, `postgresql`, `mongodb`, `redis`, `oracle-db` | Whole-token path matches, plus engine names inside config and database code |
 | `ci_cd` | GitHub Actions, GitLab CI, Jenkins, CircleCI, Azure Pipelines |

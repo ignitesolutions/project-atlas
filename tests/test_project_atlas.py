@@ -196,6 +196,39 @@ class ProjectAtlasTests(unittest.TestCase):
         self.assertFalse(scan["stack"]["redis"])
         self.assertFalse(scan["stack"]["postgresql"])
 
+    def test_nested_bin_is_scanned_but_root_bin_ignored(self):
+        for rel in ["src/bin/worker.rs", "bin/Debug/app.dll", "packages/web/node_modules/x/index.js"]:
+            (self.repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / rel).write_text("x", encoding="utf-8")
+        scan = scan_repository(self.repo)
+        self.assertIn("src/bin/worker.rs", scan["files"])
+        self.assertNotIn("bin/Debug/app.dll", scan["files"])
+        self.assertNotIn("packages/web/node_modules/x/index.js", scan["files"])
+
+    def test_rust_repo_gets_platform_file_and_db_from_cargo(self):
+        (self.repo / "Cargo.toml").write_text('[package]\nname = "api"\n\n[dependencies]\naxum = "0.7"\nsqlx = { version = "0.7", features = ["postgres"] }\n', encoding="utf-8")
+        (self.repo / "src").mkdir()
+        (self.repo / "src/main.rs").write_text("fn main() {}\n", encoding="utf-8")
+        scan, _ = self.bootstrap()
+        self.assertTrue(scan["stack"]["rust"])
+        self.assertTrue(scan["stack"]["axum"])
+        self.assertTrue(scan["stack"]["sqlx"])
+        self.assertTrue(scan["stack"]["postgresql"])
+        self.assertIn("src/main.rs", scan["buckets"]["entry_points"])
+        self.assertTrue((self.repo / "project-atlas/platforms/rust.md").is_file())
+        self.assertTrue((self.repo / "project-atlas/platforms/postgresql.md").is_file())
+        self.assertIn("src/main.rs", (self.repo / "project-atlas/platforms/rust.md").read_text(encoding="utf-8"))
+
+    def test_typescript_detection_ignores_lone_dts(self):
+        (self.repo / "package.json").write_text('{"name": "web"}', encoding="utf-8")
+        (self.repo / "types").mkdir()
+        (self.repo / "types/vendor.d.ts").write_text("declare const x: number;\n", encoding="utf-8")
+        self.assertFalse(scan_repository(self.repo)["stack"]["typescript"])
+        (self.repo / "tsconfig.json").write_text("{}", encoding="utf-8")
+        scan, _ = self.bootstrap()
+        self.assertTrue(scan["stack"]["typescript"])
+        self.assertTrue((self.repo / "project-atlas/platforms/typescript.md").is_file())
+
     def test_update_preserves_hand_authored_content_and_is_idempotent(self):
         self.bootstrap()
         code_map = self.repo / "project-atlas/code-map.md"

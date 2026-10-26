@@ -69,6 +69,8 @@ PLATFORM_FILE_MAP = {
     "php": "project-atlas/platforms/php.md",
     "node-js": "project-atlas/platforms/node-js.md",
     "python": "project-atlas/platforms/python.md",
+    "typescript": "project-atlas/platforms/typescript.md",
+    "rust": "project-atlas/platforms/rust.md",
     "mysql": "project-atlas/platforms/mysql.md",
     "mssql": "project-atlas/platforms/mssql.md",
     "docker": "project-atlas/platforms/docker.md",
@@ -169,9 +171,12 @@ MANAGED_END = "<!-- project-atlas:generated:{name}:end -->"
 CONTRACT_PATTERN = re.compile(r"<!--\s*project-atlas:contract\s+(\{.*?\})\s*-->", re.S)
 
 DEFAULT_IGNORE_DIRS = {
-    ".git", "node_modules", "vendor", "venv", ".venv", "__pycache__", "dist", "build",
-    "coverage", ".cache", ".next", ".nuxt", "target", "bin", "obj", "WEB-INF",
+    ".git", "node_modules", "vendor", "venv", ".venv", "__pycache__", "dist",
+    "coverage", ".cache", ".next", ".nuxt", "target", "WEB-INF",
 }
+# Build-output names that are also real source directories when nested (Rust `src/bin/`,
+# Node `packages/x/bin/`), so they are ignored only at the repository root.
+ROOT_ONLY_IGNORE_DIRS = {"bin", "obj", "build"}
 
 SECRET_FILE_PATTERNS = [
     re.compile(r"(^|/)\.env($|\.)", re.I),
@@ -332,6 +337,8 @@ def should_ignore(rel_path: str, is_dir: bool, extra_patterns: Iterable[str] = (
     parts = rel_path.replace("\\", "/").split("/")
     if any(part in DEFAULT_IGNORE_DIRS for part in parts):
         return True
+    if parts[0] in ROOT_ONLY_IGNORE_DIRS and (len(parts) > 1 or is_dir):
+        return True
     if rel_path.startswith("project-atlas/snapshots/generated"):
         return True
     if rel_path.startswith("project-atlas/local"):
@@ -481,7 +488,7 @@ def detect_required_platforms(stack: Dict[str, Any] | None) -> List[str]:
         return []
     platforms = []
     for key in [
-        "cfml", "php", "node-js", "python", "mysql", "mssql", "docker",
+        "cfml", "php", "node-js", "python", "typescript", "rust", "mysql", "mssql", "docker",
         "postgresql", "redis", "mongodb", "oracle-db",
     ]:
         if stack.get(key):

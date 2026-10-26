@@ -64,7 +64,8 @@ def detect_stack_from_paths(paths: Iterable[str]) -> Dict[str, object]:
         "Gemfile", "Rakefile", "config.ru",
         "pom.xml", "build.gradle", "build.gradle.kts",
         "application.properties", "application.yml", "application.yaml",
-        "go.mod", "go.sum", "Cargo.toml", "Cargo.lock", "mix.exs",
+        "go.mod", "go.sum", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rust-toolchain", "mix.exs",
+        "tsconfig.base.json", "deno.json", "bun.lockb",
         "Dockerfile", "docker-compose.yml", "compose.yml",
         "Chart.yaml", "kustomization.yaml", "serverless.yml", "serverless.yaml", "template.yaml",
     }
@@ -73,14 +74,15 @@ def detect_stack_from_paths(paths: Iterable[str]) -> Dict[str, object]:
         # Languages / runtimes
         "cfml": any_suffix(".cfm", ".cfc") or any_name("Application.cfc", "Application.cfm", "box.json", "server.json"),
         "php": any_suffix(".php") or any_name("composer.json", "artisan", "wp-config.php"),
-        "node-js": any_name("package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "vite.config.js", "next.config.js", "nuxt.config.js", "webpack.config.js"),
-        "typescript": any_name("tsconfig.json") or any_suffix(".ts", ".tsx"),
+        "node-js": any_name("package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "vite.config.js", "next.config.js", "nuxt.config.js", "webpack.config.js", "deno.json", "bun.lockb"),
+        # A lone vendored `.d.ts` declaration file does not make a TypeScript project.
+        "typescript": any_name("tsconfig.json", "tsconfig.base.json") or any(p.endswith((".ts", ".tsx", ".mts", ".cts")) and not p.endswith((".d.ts", ".d.mts", ".d.cts")) for p in lower),
         "python": any_name("pyproject.toml", "requirements.txt", "Pipfile", "poetry.lock", "manage.py", "app.py", "wsgi.py", "asgi.py"),
         "ruby": any_name("Gemfile", "Rakefile"),
         "java": any_name("pom.xml", "build.gradle", "build.gradle.kts"),
         "dotnet": any_suffix(".csproj", ".sln") or any_name("Program.cs", "Startup.cs"),
         "go": any_name("go.mod", "go.sum"),
-        "rust": any_name("Cargo.toml", "Cargo.lock"),
+        "rust": any_name("Cargo.toml", "Cargo.lock") or any_suffix(".rs"),
         "elixir": any_name("mix.exs"),
 
         # CI/CD pipelines
@@ -113,6 +115,21 @@ def detect_stack_from_paths(paths: Iterable[str]) -> Dict[str, object]:
         "flask": any_token("flask"),
         "fastapi": any_token("fastapi"),
         "phoenix": any_contains("_web/endpoint.ex", "_web/router.ex"),
+        # Rust and TypeScript backends are mostly named only inside Cargo.toml / package.json;
+        # scan_repo.py's manifest-text overrides set these flags.
+        "axum": False,
+        "actix-web": False,
+        "rocket": False,
+        "tauri": any_name("tauri.conf.json"),
+        "express": False,
+        "nestjs": any_name("nest-cli.json"),
+        "fastify": False,
+
+        # ORMs / query layers
+        "prisma": any_name("schema.prisma"),
+        "drizzle": any_name("drizzle.config.ts", "drizzle.config.js"),
+        "diesel": any_name("diesel.toml"),
+        "sqlx": False,
 
         # Frontend frameworks
         "react": any_suffix(".jsx", ".tsx"),

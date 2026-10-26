@@ -128,9 +128,11 @@ def table(rows: List[List[str]], headers: List[str]) -> str:
 
 STACK_CATEGORIES = [
     ("Languages / runtimes", ["cfml", "php", "node-js", "typescript", "python", "ruby", "java", "dotnet", "go", "rust", "elixir"]),
-    ("Backend frameworks / CMS", ["laravel", "symfony", "wordpress", "drupal", "rails", "spring", "django", "flask", "fastapi", "phoenix"]),
+    ("Backend frameworks / CMS", ["laravel", "symfony", "wordpress", "drupal", "rails", "spring", "django", "flask", "fastapi", "phoenix",
+                                  "axum", "actix-web", "rocket", "tauri", "express", "nestjs", "fastify"]),
     ("Frontend frameworks", ["react", "vue", "angular", "svelte", "nextjs", "nuxt", "tailwindcss", "graphql"]),
     ("Databases", ["mysql", "mssql", "postgresql", "mongodb", "redis", "sqlite", "oracle-db"]),
+    ("ORMs / query layers", ["prisma", "drizzle", "diesel", "sqlx"]),
     ("Infrastructure / deployment", ["docker", "kubernetes", "terraform", "serverless", "rabbitmq", "kafka", "elasticsearch"]),
 ]
 
@@ -343,7 +345,8 @@ def build_context(scan: Dict[str, Any], site_url: str = "") -> Dict[str, str]:
     buckets = scan.get("buckets", {}) or {}
     markers = stack.get("markers", []) or []
     files = scan.get("files", []) or []
-    manifest_names = {"box.json", "server.json", "composer.json", "package.json", "pyproject.toml", "requirements.txt"}
+    manifest_names = {"box.json", "server.json", "composer.json", "package.json", "pyproject.toml", "requirements.txt",
+                      "cargo.toml", "cargo.lock", "rust-toolchain.toml", "rust-toolchain", "tsconfig.json", "tsconfig.base.json", "deno.json"}
 
     def yes_no(key: str) -> str:
         return "yes" if stack.get(key) else "no"
@@ -389,6 +392,8 @@ def build_context(scan: Dict[str, Any], site_url: str = "") -> Dict[str, str]:
         "php_detected": yes_no("php"),
         "node_detected": yes_no("node-js"),
         "python_detected": yes_no("python"),
+        "typescript_detected": yes_no("typescript"),
+        "rust_detected": yes_no("rust"),
         "mysql_detected": yes_no("mysql"),
         "mssql_detected": yes_no("mssql"),
         "postgresql_detected": yes_no("postgresql"),
