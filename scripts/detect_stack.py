@@ -100,9 +100,10 @@ def detect_stack_from_paths(paths: Iterable[str]) -> Dict[str, object]:
         "mocha": any_name(".mocharc.yml", ".mocharc.yaml", "mocha.opts"),
 
         # CSS Preprocessing
-        "sass": any_suffix(".scss") or any_contains("node_modules/sass/", "package.json", "sass"),
-        "less": any_suffix(".less") or any_contains("node_modules/less/", "package.json", "less"),
-        "postcss": any_name("postcss.config.js", "postcss.config.cjs") or any_contains("package.json", "postcss"),
+        # package.json dependencies are matched by scan_repo.py's manifest-text overrides.
+        "sass": any_suffix(".scss", ".sass"),
+        "less": any_suffix(".less"),
+        "postcss": any_name("postcss.config.js", "postcss.config.cjs", "postcss.config.mjs"),
 
         # Backend frameworks / CMS
         "laravel": any_name("artisan"),

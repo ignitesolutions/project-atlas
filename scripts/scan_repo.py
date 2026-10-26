@@ -30,7 +30,9 @@ SCRIPT_FUNCTION_RE = re.compile(
 
 BUCKET_RULES = [
     ("entry_points", ["application.cfc", "application.cfm", "index.cfm", "index.php", "app.py", "manage.py", "server.js", "main.js",
-                      "main.rs", "lib.rs", "build.rs", "index.ts", "main.ts", "server.ts", "app.ts"]),
+                      "main.rs", "lib.rs", "build.rs", "index.ts", "main.ts", "server.ts", "app.ts",
+                      # Nested bin/ holds executables (Rust src/bin/, Node packages/x/bin/); a root bin/ is never scanned.
+                      "bin"]),
     ("routes", ["route", "routes"]),
     ("controllers", ["controller", "controllers"]),
     ("handlers", ["handler", "handlers"]),
@@ -280,6 +282,7 @@ STACK_TEXT_OVERRIDE_TOKENS += [
     ("fastify", _dependency_tokens("fastify")), ("prisma", _dependency_tokens("@prisma/client") + _dependency_tokens("prisma")),
     ("drizzle", _dependency_tokens("drizzle-orm")), ("diesel", _dependency_tokens("diesel")),
     ("sqlx", _dependency_tokens("sqlx")),
+    ("sass", ['"sass":']), ("less", ['"less":']), ("postcss", ['"postcss":']),
 ]
 
 

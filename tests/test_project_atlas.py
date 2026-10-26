@@ -207,14 +207,16 @@ class ProjectAtlasTests(unittest.TestCase):
 
     def test_rust_repo_gets_platform_file_and_db_from_cargo(self):
         (self.repo / "Cargo.toml").write_text('[package]\nname = "api"\n\n[dependencies]\naxum = "0.7"\nsqlx = { version = "0.7", features = ["postgres"] }\n', encoding="utf-8")
-        (self.repo / "src").mkdir()
+        (self.repo / "src/bin").mkdir(parents=True)
         (self.repo / "src/main.rs").write_text("fn main() {}\n", encoding="utf-8")
+        (self.repo / "src/bin/worker.rs").write_text("fn main() {}\n", encoding="utf-8")
         scan, _ = self.bootstrap()
         self.assertTrue(scan["stack"]["rust"])
         self.assertTrue(scan["stack"]["axum"])
         self.assertTrue(scan["stack"]["sqlx"])
         self.assertTrue(scan["stack"]["postgresql"])
         self.assertIn("src/main.rs", scan["buckets"]["entry_points"])
+        self.assertIn("src/bin/worker.rs", scan["buckets"]["entry_points"])
         self.assertTrue((self.repo / "project-atlas/platforms/rust.md").is_file())
         self.assertTrue((self.repo / "project-atlas/platforms/postgresql.md").is_file())
         self.assertIn("src/main.rs", (self.repo / "project-atlas/platforms/rust.md").read_text(encoding="utf-8"))
@@ -228,6 +230,20 @@ class ProjectAtlasTests(unittest.TestCase):
         scan, _ = self.bootstrap()
         self.assertTrue(scan["stack"]["typescript"])
         self.assertTrue((self.repo / "project-atlas/platforms/typescript.md").is_file())
+
+    def test_css_preprocessors_come_from_dependencies_not_package_json_presence(self):
+        (self.repo / "package.json").write_text('{"dependencies": {"react": "^18"}}', encoding="utf-8")
+        (self.repo / "src/stateless").mkdir(parents=True)
+        (self.repo / "src/stateless/index.js").write_text("x", encoding="utf-8")
+        stack = scan_repository(self.repo)["stack"]
+        self.assertFalse(stack["sass"])
+        self.assertFalse(stack["less"])
+        self.assertFalse(stack["postcss"])
+        (self.repo / "package.json").write_text('{"devDependencies": {"sass": "^1", "postcss": "^8"}}', encoding="utf-8")
+        stack = scan_repository(self.repo)["stack"]
+        self.assertTrue(stack["sass"])
+        self.assertTrue(stack["postcss"])
+        self.assertFalse(stack["less"])
 
     def test_update_preserves_hand_authored_content_and_is_idempotent(self):
         self.bootstrap()
